@@ -378,7 +378,8 @@ function Update-MarkdownHelp
         [switch]$UpdateInputOutput,
         [Switch]$Force,
         [System.Management.Automation.Runspaces.PSSession]$Session,
-        [switch]$ExcludeDontShow
+        [switch]$ExcludeDontShow,
+        [switch]$NoMetaData
     )
 
     begin
@@ -422,22 +423,10 @@ function Update-MarkdownHelp
             $file = $_
 
             $filePath = $file.FullName
-            $oldModels = GetMamlModelImpl $filePath -ForAnotherMarkdown -Encoding $Encoding
-
-            if ($oldModels.Count -gt 1)
-            {
-                log -warning ($LocalizedData.FileContainsMoreThanOneCommand -f $filePath)
-                log -warning $LocalizedData.OneCommandPerFile
-                return
-            }
-
-            $oldModel = $oldModels[0]
-
-            $name = $oldModel.Name
-            [Array]$loadedModulesBefore = $(Get-Module | Select-Object -Property Name)
+            $name = $file.BaseName
             $command = Get-Command $name -ErrorAction SilentlyContinue
-            if (-not $command)
-            {
+
+            if (-not $command) {
                 if ($Force) {
                     if (Test-Path $filePath) {
                         Remove-Item -Path $filePath -Confirm:$false
@@ -449,16 +438,33 @@ function Update-MarkdownHelp
                     return
                 }
             }
-            elseif (($null -ne $command.ModuleName) -and ($loadedModulesBefore.Name -notcontains $command.ModuleName))
+
+            $oldModels = GetMamlModelImpl $filePath -ForAnotherMarkdown -Encoding $Encoding
+
+            if ($oldModels.Count -gt 1)
+            {
+                log -warning ($LocalizedData.FileContainsMoreThanOneCommand -f $filePath)
+                log -warning $LocalizedData.OneCommandPerFile
+                return
+            }
+
+            $oldModel = $oldModels[0]
+            $name = $oldModel.Name               
+            [Array]$loadedModulesBefore = $(Get-Module | Select-Object -Property Name)
+    
+            if (($null -ne $command.ModuleName) -and ($loadedModulesBefore.Name -notcontains $command.ModuleName))
             {
                 log -warning ($LocalizedData.ModuleImporteAutomaticaly -f $($command.ModuleName))
             }
 
             # update the help file entry in the metadata
-            $metadata = Get-MarkdownMetadata $filePath
-            $metadata["external help file"] = GetHelpFileName $command
             $reflectionModel = GetMamlObject -Session $Session -Cmdlet $name -UseFullTypeName:$UseFullTypeName -ExcludeDontShow:$ExcludeDontShow.IsPresent
-            $metadata[$script:MODULE_PAGE_MODULE_NAME] = $reflectionModel.ModuleName
+
+            $metadata = Get-MarkdownMetadata $filePath
+            if ($metadata) {
+                $metadata["external help file"] = GetHelpFileName $command
+                $metadata[$script:MODULE_PAGE_MODULE_NAME] = $reflectionModel.ModuleName
+            }
 
             $merger = New-Object Markdown.MAML.Transformer.MamlModelMerger -ArgumentList $infoCallback
             $newModel = $merger.Merge($reflectionModel, $oldModel, $UpdateInputOutput)
@@ -468,7 +474,7 @@ function Update-MarkdownHelp
                 SortParamsAlphabetically $newModel
             }
 
-            $md = ConvertMamlModelToMarkdown -mamlCommand $newModel -metadata $metadata -PreserveFormatting
+            $md = ConvertMamlModelToMarkdown -mamlCommand $newModel -metadata $metadata -NoMetadata:$NoMetadata -PreserveFormatting
             MySetContent -path $file.FullName -value $md -Encoding $Encoding -Force # yield
         }
     }

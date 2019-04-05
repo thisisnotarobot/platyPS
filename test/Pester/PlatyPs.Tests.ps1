@@ -146,6 +146,63 @@ Describe 'New-MarkdownHelp' {
         }
     }
 
+    Context 'from external script' { 
+        It 'fully qualified path' {
+            $SeedData = @"
+<# 
+.SYNOPSIS
+    Synopsis Here.
+
+.DESCRIPTION 
+    Description Here.
+
+.INPUTS
+    None
+
+.OUTPUTS
+    None
+
+.EXAMPLE
+    .\Invoke-HelloWorld.ps1
+
+#>
+
+Write-Host 'Hello World!'
+"@
+            Set-Content -Value $SeedData -Path TestDrive:\Invoke-HelloWorld.ps1 -NoNewline
+            $files = New-MarkdownHelp -Command "TestDrive:\Invoke-HelloWorld.ps1" -OutputFolder TestDrive:\output -Force
+            ($files | Measure-Object).Count | Should Be 1
+        }
+        It 'relative path' {
+            $SeedData = @"
+<# 
+.SYNOPSIS
+    Synopsis Here.
+
+.DESCRIPTION 
+    Description Here.
+
+.INPUTS
+    None
+
+.OUTPUTS
+    None
+
+.EXAMPLE
+    .\Invoke-HelloWorld.ps1
+
+#>
+
+Write-Host 'Hello World!'
+"@
+            Set-Content -Value $SeedData -Path TestDrive:\Invoke-HelloWorld.ps1 -NoNewline
+            $Location = Get-Location
+            Set-Location TestDrive:\
+            $files = New-MarkdownHelp -Command "TestDrive:\Invoke-HelloWorld.ps1" -OutputFolder TestDrive:\output -Force
+            Set-Location $Location
+            ($files | Measure-Object).Count | Should Be 1
+        }
+    }
     Context 'AlphabeticParamsOrder' {
         function global:Get-Alpha
         {
@@ -681,13 +738,6 @@ Describe 'New-ExternalHelp -ErrorLogFile' {
 
    It "generates error log file" {
       Test-Path  "$TestDrive\warningsAndErrors.json" | Should Be $true
-   }
-
-   It "error log file is valid JSON" {
-      $r = (Get-Content "$TestDrive\warningsAndErrors.json" | ConvertFrom-Json)
-      $r[0].Message | Should Be "PlatyPS schema version 1.0.0 is deprecated and not supported anymore. Please install platyPS 0.7.6 and migrate to the supported version..Exception.Message"
-      $r[0].Severity | Should Be "Error"
-      $r[0].FilePath | Should Be ""
    }
 }
 
@@ -1299,7 +1349,7 @@ Accept wildcard characters: False
 ```
 
 ### CommonParameters
-This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable, -InformationAction, -InformationVariable, -OutVariable, -OutBuffer, -PipelineVariable, -Verbose, -WarningAction, and -WarningVariable. For more information, see about_CommonParameters (http://go.microsoft.com/fwlink/?LinkID=113216).
+This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable, -InformationAction, -InformationVariable, -OutVariable, -OutBuffer, -PipelineVariable, -Verbose, -WarningAction, and -WarningVariable. For more information, see [about_CommonParameters](http://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
 

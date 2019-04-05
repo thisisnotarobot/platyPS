@@ -192,6 +192,7 @@ function New-MarkdownHelp
                 }
 
                 $commandName = $mamlObject.Name
+
                 # create markdown
                 if ($NoMetadata)
                 {
@@ -206,10 +207,20 @@ function New-MarkdownHelp
                     }
                     else
                     {
-                        $a = @{
-                            Name = $commandName
+                        # Get-Command requires that script input be a path
+                        if ($mamlObject.Name.EndsWith(".ps1"))
+                        {
+                            $getCommandName = Resolve-Path $Command
+                        }
+                        # For cmdlets, nothing needs to be done
+                        else
+                        {
+                            $getCommandName = $commandName
                         }
 
+                        $a = @{
+                            Name = $getCommandName
+                        }
                         if ($module) {
                             # for module case, scope it just to this module
                             $a['Module'] = $module
@@ -588,7 +599,8 @@ function Update-MarkdownHelpModule
         [switch]$UseFullTypeName,
         [switch]$UpdateInputOutput,
         [switch]$Force,
-        [System.Management.Automation.Runspaces.PSSession]$Session
+        [System.Management.Automation.Runspaces.PSSession]$Session,
+        [switch]$ExcludeDontShow
     )
 
     begin
@@ -641,7 +653,7 @@ function Update-MarkdownHelpModule
             # always append on this call
             log ("[Update-MarkdownHelpModule]" + (Get-Date).ToString())
             log ($LocalizedData.UpdateDocsForModule -f $module, $modulePath)
-            $affectedFiles = Update-MarkdownHelp -Session $Session -Path $modulePath -LogPath $LogPath -LogAppend -Encoding $Encoding -AlphabeticParamsOrder:$AlphabeticParamsOrder -UseFullTypeName:$UseFullTypeName -UpdateInputOutput:$UpdateInputOutput -Force:$Force
+            $affectedFiles = Update-MarkdownHelp -Session $Session -Path $modulePath -LogPath $LogPath -LogAppend -Encoding $Encoding -AlphabeticParamsOrder:$AlphabeticParamsOrder -UseFullTypeName:$UseFullTypeName -UpdateInputOutput:$UpdateInputOutput -Force:$Force -ExcludeDontShow:$ExcludeDontShow
             $affectedFiles # yeild
 
             $allCommands = GetCommands -AsNames -Module $Module
@@ -655,7 +667,7 @@ function Update-MarkdownHelpModule
                 if ( -not ($updatedCommands -contains $_) )
                 {
                     log ($LocalizedData.CreatingNewMarkdownForCommand -f $_)
-                    $newFiles = New-MarkdownHelp -Command $_ -OutputFolder $modulePath -AlphabeticParamsOrder:$AlphabeticParamsOrder -Force:$Force
+                    $newFiles = New-MarkdownHelp -Command $_ -OutputFolder $modulePath -AlphabeticParamsOrder:$AlphabeticParamsOrder -Force:$Force -ExcludeDontShow:$ExcludeDontShow
                     $newFiles # yeild
                 }
             }
@@ -1618,17 +1630,13 @@ function GetSchemaVersion
     if ($metadata)
     {
         $schema = $metadata[$script:SCHEMA_VERSION_YAML_HEADER]
-        if (-not $schema)
-        {
-            # there is metadata, but schema version is not specified.
-            # assume 2.0.0
-            $schema = '2.0.0'
-        }
     }
-    else
+
+    if (-not $schema)
     {
-        # if there is not metadata, then it's schema version 1.0.0
-        $schema = '1.0.0'
+        # either there is no metadata, or schema version is not specified.
+        # assume 2.0.0
+        $schema = '2.0.0'
     }
 
     return $schema
@@ -1813,39 +1821,42 @@ function GetHelpFileName
                 return $CommandInfo.HelpFile
             }
         }
-
-        # overwise, lets guess it
-        $module = @($CommandInfo.Module) + ($CommandInfo.Module.NestedModules) |
-            Where-Object {$_.ModuleType -ne 'Manifest'} |
-            Where-Object {$_.ExportedCommands.Keys -contains $CommandInfo.Name}
-
-        if (-not $module)
+        # only run module evaluations if the input command isn't a script
+        if ($CommandInfo.CommandType -ne "ExternalScript")
         {
-            Write-Warning -Message ($LocalizedData.ModuleNotFoundFromCommand -f '[GetHelpFileName]', $CommandInfo.Name)
-            return
-        }
+            # overwise, lets guess it
+            $module = @($CommandInfo.Module) + ($CommandInfo.Module.NestedModules) |
+                Where-Object {$_.ModuleType -ne 'Manifest'} |
+                Where-Object {$_.ExportedCommands.Keys -contains $CommandInfo.Name}
 
-        if ($module.Count -gt 1)
-        {
-            Write-Warning -Message ($LocalizedData.MultipleModulesFoundFromCommand -f '[GetHelpFileName]', $CommandInfo.Name)
-            $module = $module | Select-Object -First 1
-        }
-
-        if (Test-Path $module.Path -Type Leaf)
-        {
-            # for regular modules, we can deduct the filename from the module path file
-            $moduleItem = Get-Item -Path $module.Path
-            if ($moduleItem.Extension -eq '.psm1') {
-                $fileName = $moduleItem.BaseName
-            } else {
-                $fileName = $moduleItem.Name
+            if (-not $module)
+            {
+                Write-Warning -Message ($LocalizedData.ModuleNotFoundFromCommand -f '[GetHelpFileName]', $CommandInfo.Name)
+                return
             }
-        }
-        else
-        {
-            # if it's something like Dynamic module,
-            # we  guess the desired help file name based on the module name
-            $fileName = $module.Name
+
+            if ($module.Count -gt 1)
+            {
+                Write-Warning -Message ($LocalizedData.MultipleModulesFoundFromCommand -f '[GetHelpFileName]', $CommandInfo.Name)
+                $module = $module | Select-Object -First 1
+            }
+
+            if (Test-Path $module.Path -Type Leaf)
+            {
+                # for regular modules, we can deduct the filename from the module path file
+                $moduleItem = Get-Item -Path $module.Path
+                if ($moduleItem.Extension -eq '.psm1') {
+                    $fileName = $moduleItem.BaseName
+                } else {
+                    $fileName = $moduleItem.Name
+                }
+            }
+            else
+            {
+                # if it's something like Dynamic module,
+                # we  guess the desired help file name based on the module name
+                $fileName = $module.Name
+            }
         }
 
         return "$fileName-help.xml"
@@ -2366,7 +2377,7 @@ function GetMamlObject
             Write-Verbose -Message ("`t" + ($LocalizedData.Processing -f $Command.Name))
             $Help = Get-Help $Command.Name
             # yield
-            ConvertPsObjectsToMamlModel -Command $Command -Help $Help -UsePlaceholderForSynopsis:(CommandHasAutogeneratedSynopsis $Help)  -UseFullTypeName:$UseFullTypeName
+            ConvertPsObjectsToMamlModel -Command $Command -Help $Help -UsePlaceholderForSynopsis:(CommandHasAutogeneratedSynopsis $Help)  -UseFullTypeName:$UseFullTypeName -ExcludeDontShow:$ExcludeDontShow
         }
     }
     else # Maml
@@ -2387,7 +2398,7 @@ function GetMamlObject
             }
 
             # yield
-            ConvertPsObjectsToMamlModel -Command $Command -Help $Help -UseHelpForParametersMetadata  -UseFullTypeName:$UseFullTypeName
+            ConvertPsObjectsToMamlModel -Command $Command -Help $Help -UseHelpForParametersMetadata  -UseFullTypeName:$UseFullTypeName -ExcludeDontShow:$ExcludeDontShow
         }
     }
 }
